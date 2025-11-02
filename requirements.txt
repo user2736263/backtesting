@@ -3,8 +3,9 @@ ccxt
 requests
 gspread
 oauth2client
-python-binance
 pandas
 numpy
 urllib3
 python-dotenv
+hyperliquid-python-sdk
+eth-account

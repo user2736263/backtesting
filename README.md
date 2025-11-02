@@ -1,6 +1,6 @@
-# Binance Trading Bot - Comprehensive Documentation
+# Hyperliquid Perps Trading Bot - Comprehensive Documentation
 
-An automated cryptocurrency trading bot for Binance that executes trades based on webhook signals, with integrated stop-loss protection, position management, and comprehensive logging.
+An automated cryptocurrency trading bot for Hyperliquid perps that executes trades based on webhook signals, with integrated stop-loss protection, position management, and comprehensive logging.
 
 ---
 
@@ -23,20 +23,18 @@ An automated cryptocurrency trading bot for Binance that executes trades based o
 
 ## Overview
 
-This trading bot is designed to automatically execute cryptocurrency trades on Binance based on webhook signals from external trading indicators or strategies. The bot provides:
+This trading bot is designed to automatically execute cryptocurrency trades on Hyperliquid (perpetual futures) based on webhook signals from external trading indicators or strategies. The bot provides:
 
 - **Automated Trade Execution**: Market buy/sell orders triggered via webhook
 - **Stop-Loss Protection**: Background monitoring thread automatically sells if price drops below threshold
 - **Position Management**: Tracks open positions and prevents duplicate trades
 - **Trade Cooldown**: Prevents overtrading with configurable cooldown periods
 - **Comprehensive Logging**: All trades logged to Google Sheets with detailed metrics
-- **Email Notifications**: Automatic PnL notifications after each trade closure
-- **Proxy Support**: Uses Oxylabs proxy for secure API connections
 - **Emergency Controls**: Force exit and manual position management endpoints
 
-**Current Trading Pair**: SOL/USDT  
+**Current Trading Pair**: SOL/USDC  
 **Default Stop-Loss**: 0.7% below entry price  
-**Capital Allocation**: 11% of available USDT balance per trade  
+**Capital Allocation**: 11% of available USDC balance per trade  
 **Trade Cooldown**: 600 seconds (10 minutes)
 
 ---
@@ -57,7 +55,7 @@ External Trading Signal/Indicator
     └──────────────┘
            ↓
     ┌──────────────┐
-    │  Execute     │ → Binance API (via Proxy)
+    │  Execute     │ → Hyperliquid Perps (Agent Wallet)
     │  Buy/Sell    │ → Market Order
     └──────────────┘
            ↓
@@ -72,8 +70,8 @@ External Trading Signal/Indicator
     └──────────────┘
            ↓
     ┌──────────────┐
-    │  Logging &   │ → Google Sheets + Email notification
-    │  Notification│
+    │  Logging     │ → Google Sheets
+    │              │
     └──────────────┘
 ```
 
@@ -86,11 +84,11 @@ External Trading Signal/Indicator
 - Checks current position status (prevents duplicate buys/sells)
 
 #### 2. **Buy Order Execution**
-- Validates sufficient USDT balance
-- Calculates trade size: 11% of available USDT
-- Fetches current market price for SOL/USDT
-- Calculates quantity with proper precision (0.001 SOL)
-- Executes market buy order via Binance API
+- Validates sufficient USDC withdrawable margin
+- Calculates trade size: 11% of available USDC
+- Fetches current mid price for SOL/USDC
+- Calculates quantity with proper precision (sizeIncrement, default 0.001 SOL)
+- Executes market buy order via Hyperliquid perps (Agent Wallet)
 - Stores entry price, quantity, and timestamp
 - Activates stop-loss monitoring thread
 
@@ -105,13 +103,12 @@ External Trading Signal/Indicator
 
 #### 4. **Sell Order Execution**
 - Validates position is open
-- Executes market sell order for tracked quantity
+- Executes reduce-only market sell for tracked quantity (closes long)
 - Calculates PnL: `(sell_revenue - sell_fees) - (buy_cost + buy_fees)`
 - Logs trade details to Google Sheets:
   - Entry price, sell price, quantity
   - PnL, time difference, timestamp
   - Sell reason (normal sell, stop loss, force exit)
-- Sends email notification with PnL
 - Clears position state and stops monitoring thread
 
 #### 5. **Emergency Controls**
@@ -131,10 +128,10 @@ External Trading Signal/Indicator
 
 ### Account Requirements
 
-1. **Binance Account**
-   - Active Binance account with API access enabled
-   - API Key and Secret Key with trading permissions
-   - Sufficient USDT balance for trading
+1. **Hyperliquid Account**
+   - Main account funded with USDC (perps margin)
+   - Authorized Agent Wallet (API private key) for trading
+   - Sufficient USDC margin for trading
 
 2. **Google Cloud Project**
    - Google Cloud account
@@ -142,13 +139,9 @@ External Trading Signal/Indicator
    - Google Sheets API enabled
    - Google Drive API enabled
 
-3. **Email Account**
-   - GMX email account (or modify for other SMTP providers)
-   - Email credentials for SMTP authentication
+3. [Removed] Email Account (email notifications not used)
 
-4. **Proxy Service**
-   - Oxylabs proxy account (or modify for other proxy providers)
-   - Proxy username and password
+4. [Removed] Proxy Service (no proxy required)
 
 ### Network Requirements
 
@@ -164,7 +157,7 @@ External Trading Signal/Indicator
 
 ```bash
 git clone <repository-url>
-cd TradingBotBinance
+cd TradingBotHyperLiquid
 ```
 
 ### Step 2: Create Virtual Environment (Recommended)
@@ -187,10 +180,10 @@ pip install -r requirements.txt
 
 **Required packages:**
 - `flask` - Web framework for webhook endpoints
-- `python-binance` - Binance API client
+- `hyperliquid-python-sdk` - Hyperliquid API client (Agent Wallet signing)
 - `gspread` - Google Sheets API client
 - `oauth2client` - Google authentication
-- `requests` - HTTP requests and proxy support
+- `requests` - HTTP requests (general)
 - `pandas`, `numpy` - Data processing (if needed)
 
 ### Step 4: Service Account Setup
@@ -201,12 +194,11 @@ pip install -r requirements.txt
 
 ### Step 5: Configure Credentials
 
-**⚠️ SECURITY WARNING**: Currently, credentials are hardcoded in `app.py`. See [Security Considerations](#security-considerations) for recommended improvements.
+**⚠️ SECURITY WARNING**: Do not hardcode credentials. See [Security Considerations](#security-considerations) for recommended improvements.
 
-Edit `app.py` and update:
-- Binance API credentials (lines 150-151)
-- Proxy credentials (lines 154-155)
-- Email credentials (line 67)
+Configure environment variables:
+- `HL_OWNER_ADDRESS`
+- `HL_AGENT_PRIVATE_KEY`
 
 ### Step 6: Create Google Sheet
 
@@ -241,56 +233,28 @@ All configuration is currently in `app.py`. Key parameters:
 
 | Parameter | Default Value | Description |
 |-----------|--------------|-------------|
-| `SYMBOL` | `"SOL/USDT"` | Trading pair (format: BASE/QUOTE) |
+| `SYMBOL` | `"SOL/USDC"` | Trading pair (format: BASE/QUOTE) |
 | `STOP_LOSS_PERCENT` | `0.007` | Stop-loss percentage (0.7%) |
-| `TRADING_FEE_RATE` | `0.001` | Binance trading fee (0.1%) |
+| `TRADING_FEE_RATE` | `0.001` | Taker fee estimate |
 | `TRADE_COOLDOWN` | `600` | Seconds between trades (10 minutes) |
-| Capital Allocation | `11%` | Percentage of USDT balance per trade (hardcoded: `0.11` in line 302) |
+| Capital Allocation | `11%` | Percentage of USDC balance per trade (hardcoded: `0.11` in line 302) |
 
-### Binance API Configuration
+### Hyperliquid Agent Wallet Configuration
 
-```python
-API_KEY    = 'your_binance_api_key'
-API_SECRET = 'your_binance_secret_key'
+Environment variables (see `env.example`):
+
+```
+HL_OWNER_ADDRESS=0x...
+HL_AGENT_PRIVATE_KEY=0x...
 ```
 
-**API Permissions Required:**
-- Enable Spot & Margin Trading
-- Read Info permissions
-- Enable Withdrawals (if needed)
+Notes:
+- Use an Agent Wallet with trading authorization. Funds remain in the main account.
+- Store secrets in environment variables; never commit secrets.
 
-**Restrictions:**
-- Do NOT enable "Enable Withdrawals" unless absolutely necessary
-- Use IP whitelist if available
-- Rotate keys periodically
+### [Removed] Proxy Configuration (not required)
 
-### Proxy Configuration
-
-```python
-ProxyUsername = "your_oxylabs_username"
-ProxyPassword = "your_oxylabs_password"
-
-proxies = {
-    "https": f"https://user-{ProxyUsername}:{ProxyPassword}@ddc.oxylabs.io:8002"
-}
-```
-
-**Proxy Purpose:**
-- Provides stable IP address
-- May bypass some rate limits
-- Adds layer of security
-
-### Email Configuration
-
-```python
-sender_email    = "tradingbot@gmx-ist-cool.de"  # GMX alias
-recipient_email = "your-email@gmx.ch"
-```
-
-SMTP settings (hardcoded):
-- Server: `mail.gmx.net`
-- Port: `587`
-- Protocol: `STARTTLS`
+### [Removed] Email Configuration (not used)
 
 ### Google Sheets Configuration
 
@@ -302,24 +266,19 @@ SMTP settings (hardcoded):
 
 ## Services Integration
 
-### 1. Binance API Setup
+### 1. Hyperliquid Agent Wallet Setup
 
-#### Create API Keys
-1. Log into Binance account
-2. Go to API Management
-3. Create new API key
-4. Name it (e.g., "Trading Bot")
-5. Enable "Enable Spot & Margin Trading"
-6. **Do NOT enable "Enable Withdrawals"** unless required
-7. Set IP whitelist if available
-8. Save API Key and Secret Key securely
+#### Create and Authorize Agent Wallet
+1. Open Hyperliquid app → API/Agent Wallets
+2. Create new Agent Wallet and authorize trading
+3. Copy the agent private key and store in environment
+4. Set `HL_OWNER_ADDRESS` to your main account address
 
 #### Verify Connection
-The bot prints connection status on startup:
+On startup the bot logs:
 ```
-🚀 Using LIVE Binance via python‑binance
-SYMBOL INFO: {...}
-BALANCE: {...}
+🚀 Initializing Hyperliquid adapter (mainnet)
+⚙️ Setting leverage for SOL: {USER_DEFINED_LEVERAGE}x (cross)
 ```
 
 ### 2. Google Sheets Setup
@@ -345,41 +304,9 @@ BALANCE: {...}
 4. Grant "Editor" access
 5. Sheet ID or name will be accessed automatically by `gspread`
 
-### 3. Email (GMX) Setup
+### [Removed] Email Setup (not used)
 
-#### GMX Email Configuration
-1. Create GMX account at [gmx.com](https://www.gmx.com)
-2. Enable SMTP access (usually enabled by default)
-3. SMTP Settings:
-   - Server: `mail.gmx.net`
-   - Port: `587`
-   - Security: STARTTLS
-   - Username: Your GMX email
-   - Password: Your GMX password
-
-#### Email Alias (Optional)
-- Create email alias if desired (e.g., `tradingbot@gmx-ist-cool.de`)
-- Update `sender_email` in `send_email()` function
-
-### 4. Oxylabs Proxy Setup
-
-#### Create Account
-1. Sign up at [oxylabs.io](https://oxylabs.io)
-2. Choose proxy plan (Datacenter proxies recommended)
-3. Get credentials from dashboard
-
-#### Configuration
-- Username format: Provided by Oxylabs
-- Password: Provided by Oxylabs
-- Endpoint: `ddc.oxylabs.io:8002` (for datacenter proxies)
-- Authentication: Basic auth in URL format
-
-#### Verify Connection
-Bot tests proxy on startup:
-```python
-response = requests.get("https://ip.oxylabs.io/location", proxies=proxies)
-print(response.text)  # Should show proxy location
-```
+### [Removed] Proxy Setup (not required)
 
 ---
 
@@ -463,7 +390,7 @@ Executes a test sell order (bypasses webhook validation).
 ### Emergency Endpoints
 
 #### `GET /force_sell`
-Forces exit of current position using available wallet balance (98% of free balance).
+Forces exit of current position by placing a reduce-only market order for the full position size.
 
 **Response (Success):**
 ```json
@@ -533,17 +460,17 @@ last_trade_timestamp = 0   # Last trade execution time (for cooldown)
 1. **Validation Checks:**
    - Cooldown period elapsed (600 seconds)
    - Not already in position
-   - Sufficient USDT balance
+   - Sufficient USDC margin
 
 2. **Order Calculation:**
-   - Available balance: `balance = get_asset_balance('USDT')['free']`
+   - Available balance: withdrawable USDC margin
    - Capital to use: `balance * 0.11` (11%)
-   - Current price: `get_symbol_ticker('SOLUSDT')['price']`
+   - Current price: current mid price for SOL/USDC
    - Quantity: `(capital_to_use / current_price)` rounded to 0.001
 
 3. **Execution:**
-   - Market buy order: `order_market_buy(symbol='SOLUSDT', quantity=quantity)`
-   - Extract fill price from order response
+   - Market buy order on Hyperliquid
+   - Extract average fill price from order response
    - Store entry price, quantity, buy time
    - Start stop-loss monitoring thread
 
@@ -555,8 +482,8 @@ last_trade_timestamp = 0   # Last trade execution time (for cooldown)
    - Valid position quantity
 
 2. **Execution:**
-   - Market sell order: `order_market_sell(symbol='SOLUSDT', quantity=position_quantity)`
-   - Extract fill price from order response
+   - Reduce-only market sell on Hyperliquid for `position_quantity`
+   - Capture average fill price from order response
    - Calculate PnL with fees
 
 3. **PnL Calculation:**
@@ -568,7 +495,6 @@ last_trade_timestamp = 0   # Last trade execution time (for cooldown)
 
 4. **Post-Sell Actions:**
    - Log to Google Sheets
-   - Send email notification
    - Clear position state
    - Stop monitoring thread
 
@@ -654,12 +580,12 @@ PORT=8080 python app.py
    ```
    ```ini
    [Unit]
-   Description=Binance Trading Bot
+   Description=Hyperliquid Trading Bot
    After=network.target
 
    [Service]
    User=your-user
-   WorkingDirectory=/path/to/TradingBotBinance
+   WorkingDirectory=/path/to/TradingBotHyperLiquid
    ExecStart=/path/to/venv/bin/python app.py
    Restart=always
 
@@ -738,9 +664,8 @@ server {
 **Current Implementation Issues:**
 
 1. **Hardcoded Credentials**
-   - Binance API keys are in plain text in `app.py` (lines 150-151)
-   - Email password is hardcoded (line 67)
-   - Proxy credentials are hardcoded (lines 154-155)
+   - Hyperliquid Agent private key and owner address should not be hardcoded
+   - [Removed] Proxy credentials were previously hardcoded
    - Service account JSON contains private keys
 
 2. **Exposed Secrets**
@@ -753,14 +678,8 @@ server {
 
 **Create `.env` file:**
 ```env
-BINANCE_API_KEY=your_api_key
-BINANCE_API_SECRET=your_secret
-PROXY_USERNAME=your_proxy_username
-PROXY_PASSWORD=your_proxy_password
-EMAIL_USERNAME=your_email@gmail.com
-EMAIL_PASSWORD=your_email_password
-SENDER_EMAIL=tradingbot@gmx-ist-cool.de
-RECIPIENT_EMAIL=your-email@gmx.ch
+HL_OWNER_ADDRESS=0x...
+HL_AGENT_PRIVATE_KEY=0x...
 ```
 
 **Install python-dotenv:**
@@ -773,10 +692,7 @@ pip install python-dotenv
 from dotenv import load_dotenv
 load_dotenv()
 
-API_KEY = os.getenv('BINANCE_API_KEY')
-API_SECRET = os.getenv('BINANCE_API_SECRET')
-ProxyUsername = os.getenv('PROXY_USERNAME')
-ProxyPassword = os.getenv('PROXY_PASSWORD')
+# Adapter reads HL_* envs via from_env()
 ```
 
 **Add to `.gitignore`:**
@@ -823,7 +739,7 @@ def webhook():
 #### 6. Regular Audits
 
 - Review logs for unauthorized access
-- Monitor API usage in Binance dashboard
+- Review Agent Wallet authorizations in Hyperliquid app
 - Check Google Sheets access logs
 - Rotate credentials periodically
 
@@ -862,38 +778,25 @@ The bot outputs detailed logs to console with emoji indicators:
 
 **Access:** View in Google Sheets, export to CSV for analysis
 
-### Email Notifications
-
-**Trigger:** After each sell order execution
-
-**Format:**
-- Subject: `PnL: {pnl_value}` (e.g., "PnL: 2.345678")
-- Body: Empty (subject contains key information)
-- From: `tradingbot@gmx-ist-cool.de`
-- To: `remy3@gmx.ch` (configure in code)
-
-**Use Case:** Quick mobile notifications of trade results
+### [Removed] Email Notifications (not used)
 
 ### Monitoring Best Practices
 
 1. **Check Logs Regularly**
    - Monitor console output for errors
    - Review stop-loss triggers
-   - Watch for proxy connection issues
 
 2. **Review Google Sheets**
    - Track win rate
    - Analyze PnL trends
    - Monitor position durations
 
-3. **Binance Dashboard**
+3. **Hyperliquid App**
    - Verify orders executed correctly
-   - Check balance changes
-   - Review API usage
+   - Check margin and positions
+   - Review Agent Wallet status
 
-4. **Email Alerts**
-   - Set up email forwarding to mobile
-   - Create filters for PnL alerts
+4. [Removed] Email Alerts
 
 ### Performance Metrics to Track
 
@@ -909,11 +812,11 @@ The bot outputs detailed logs to console with emoji indicators:
 
 ### Common Issues
 
-#### 1. "Insufficient USDT balance"
+#### 1. "Insufficient USDC balance"
 **Symptoms:** Buy order fails with balance error
 
 **Solutions:**
-- Check USDT balance: Verify in Binance account
+- Check USDC balance/margin: Verify in Hyperliquid app
 - Reduce capital allocation (currently 11%, hardcoded)
 - Ensure balance accounts for trading fees
 
@@ -935,14 +838,7 @@ The bot outputs detailed logs to console with emoji indicators:
 - Test SMTP connection manually
 - Verify sender/recipient emails are correct
 
-#### 4. Proxy Connection Errors
-**Symptoms:** API calls fail, proxy errors in logs
-
-**Solutions:**
-- Verify Oxylabs credentials are correct
-- Check proxy account is active and has credits
-- Test proxy connection: `curl --proxy ... https://ip.oxylabs.io/location`
-- Consider removing proxy temporarily for testing
+#### [Removed] Proxy Connection Errors (proxy not used)
 
 #### 5. Stop-Loss Not Triggering
 **Symptoms:** Price drops below threshold but position not sold
@@ -957,7 +853,7 @@ The bot outputs detailed logs to console with emoji indicators:
 **Symptoms:** Bot thinks position is open but it's not
 
 **Solutions:**
-- Check Binance account for actual position
+- Check Hyperliquid app for actual position
 - Use `/position_closed` endpoint to reset state
 - If position actually exists, use `/force_sell` to close
 - Restart bot after manual position closure
@@ -981,13 +877,12 @@ The bot outputs detailed logs to console with emoji indicators:
 - Review Flask logs for incoming requests
 
 #### 9. Quantity Precision Errors
-**Symptoms:** Binance rejects orders due to quantity precision
+**Symptoms:** Hyperliquid rejects orders due to quantity precision
 
 **Solutions:**
-- Verify symbol precision: `client.get_symbol_info("SOLUSDT")`
-- Check `LOT_SIZE` filter for minimum/maximum quantity
+- Ensure size respects market `sizeIncrement` (adapter enforces rounding)
 - Adjust rounding in `execute_buy_order()` if needed
-- Current precision: 0.001 SOL
+- Default precision used: 0.001 SOL
 
 #### 10. Bot Crashes on Startup
 **Symptoms:** Bot fails immediately after starting
@@ -995,7 +890,7 @@ The bot outputs detailed logs to console with emoji indicators:
 **Solutions:**
 - Check all credentials are valid
 - Verify `service_account.json` exists
-- Test Binance connection manually
+- Verify HL env vars and Agent Wallet authorization
 - Check Python version: `python --version` (requires 3.7+)
 - Verify all dependencies installed: `pip list`
 
@@ -1013,7 +908,7 @@ This is already enabled (line 18), so check console for detailed error messages.
 
 #### Recovering from Bot Restart (Position Was Open)
 
-1. Check actual position in Binance
+1. Check actual position in Hyperliquid
 2. If position exists:
    ```bash
    curl http://localhost:5000/position_open
@@ -1043,9 +938,9 @@ curl http://localhost:5000/test_buy  # Should work if no position
 
 ## Additional Resources
 
-### Binance API Documentation
-- [Binance API Docs](https://binance-docs.github.io/apidocs/spot/en/)
-- [Python-Binance Library](https://python-binance.readthedocs.io/)
+### Hyperliquid Documentation
+- Hyperliquid Docs: https://hyperliquid.gitbook.io/hyperliquid-docs
+- Python SDK: https://github.com/hyperliquid-dex/hyperliquid-python-sdk
 
 ### Google Sheets API
 - [Google Sheets API](https://developers.google.com/sheets/api)

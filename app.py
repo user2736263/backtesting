@@ -8,11 +8,10 @@ import csv
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import datetime
-from binance.client import Client
 import math
 from decimal import Decimal, ROUND_DOWN
-import requests
 from dotenv import load_dotenv
+from exchanges.hyperliquid_adapter import from_env as hl_from_env
 
 # Load environment variables
 load_dotenv()
@@ -75,33 +74,22 @@ def force_exit():
 
     print("⛔ FORCE EXIT: Attempting to close position using available wallet balance.")
 
-    base_asset = SYMBOL.split('/')[0]
-    symbol_binance = SYMBOL.replace('/', '')
-    balance = client.get_asset_balance(asset=base_asset)
-    available_balance_force_exit = float(balance['free'] or 0)
-    capital_to_use = available_balance_force_exit * 0.98
-    ticker = client.get_symbol_ticker(symbol=symbol_binance)
-    current_price  = float(ticker['price'])
-    quantity_unrounded  = capital_to_use / current_price
-    quantity_force_sell = Decimal(quantity_unrounded).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
-
-    if quantity_force_sell <= 0:
-        print("❌ No tokens available to force sell.")
+    pos_size, _pos_entry = adapter.get_position(coin)
+    if pos_size is None or pos_size <= 0:
+        print("❌ No open long position to force close.")
         return
 
     try:
-        order     = client.order_market_sell(
-                        symbol=symbol_binance,
-                        quantity=quantity_force_sell
-                    )
+        sell_avg_px, filled_sz = adapter.place_market_sell_reduce_only(coin, pos_size)
         sell_time = datetime.datetime.utcnow()
         formatted_date_time = sell_time.isoformat(timespec='milliseconds') + 'Z'
-        sell_price = float(order['fills'][0]['price'])
+        sell_price = float(sell_avg_px)
 
-        buy_cost     = (entry_price * quantity_force_sell) \
-                       + (entry_price * quantity_force_sell * TRADING_FEE_RATE)
-        sell_revenue = (sell_price * quantity_force_sell) \
-                       - (sell_price * quantity_force_sell * TRADING_FEE_RATE)
+        qty_for_pnl = float(Decimal(filled_sz).quantize(Decimal("0.001"), rounding=ROUND_DOWN))
+        buy_cost     = (entry_price * qty_for_pnl) \
+                       + (entry_price * qty_for_pnl * TRADING_FEE_RATE)
+        sell_revenue = (sell_price * qty_for_pnl) \
+                       - (sell_price * qty_for_pnl * TRADING_FEE_RATE)
         pnl = sell_revenue - buy_cost
         percent_of_trade = entry_price/100 * pnl if entry_price else 0
         time_diff = (sell_time - buy_time).total_seconds() \
@@ -112,8 +100,8 @@ def force_exit():
         if highest_price is not None and break_even_price is not None:
             percent_diff_from_break_even = ((highest_price - break_even_price) / break_even_price) * 100
 
-        print(f"✅ FORCE EXIT | Sold {quantity_force_sell} at ${sell_price:.6f}, PnL: ${pnl:.6f}")
-        save_to_gsheet(entry_price, sell_price, quantity_force_sell,
+        print(f"✅ FORCE EXIT | Sold {qty_for_pnl} at ${sell_price:.6f}, PnL: ${pnl:.6f}")
+        save_to_gsheet(entry_price, sell_price, qty_for_pnl,
                        pnl, time_diff, formatted_date_time, "force exit", percent_of_trade, 
                        highest_price, percent_diff_from_break_even)
         
@@ -162,33 +150,25 @@ highest_price          = None
 break_even_price       = None
 target_profit_price    = None
 
-# Load credentials from environment variables
-API_KEY    = os.getenv("BINANCE_API_KEY")
-API_SECRET = os.getenv("BINANCE_API_SECRET")
-ProxyUsername = os.getenv("PROXY_USERNAME")
-ProxyPassword = os.getenv("PROXY_PASSWORD")
-
-# Validate required credentials
-if not API_KEY or not API_SECRET:
-    raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET must be set in environment variables")
-if not ProxyUsername or not ProxyPassword:
-    raise ValueError("PROXY_USERNAME and PROXY_PASSWORD must be set in environment variables")
-
-proxies = {
-    "https": f"https://user-{ProxyUsername}:{ProxyPassword}@ddc.oxylabs.io:8001"
-}
-
-# --- Python‑Binance Client Setup ---
-response = requests.get("https://ip.oxylabs.io/location", proxies=proxies)
-print(response.text)
-
-client = Client(API_KEY, API_SECRET, requests_params={'proxies': proxies, 'timeout': (150, 150)})
-print("🚀 Using LIVE Binance via python‑binance")
-
-symbol_binance = SYMBOL.replace('/', '')
-print("SYMBOL INFO:", client.get_symbol_info(symbol_binance))
+# --- Hyperliquid Adapter Setup ---
+print("🚀 Initializing Hyperliquid adapter (mainnet)")
+adapter = hl_from_env()
+coin = SYMBOL.split('/')[0]
 quote_asset = SYMBOL.split('/')[1]
-print(f"BALANCE ({quote_asset}):", client.get_asset_balance(asset=quote_asset))  # prints your balances
+
+# Apply user-defined leverage (cross by default)
+try:
+    user_leverage = float(os.getenv("USER_DEFINED_LEVERAGE", "1"))
+    leverage_mode = os.getenv("LEVERAGE_MODE", "cross")
+    if user_leverage > 0:
+        print(f"⚙️ Setting leverage for {coin}: {user_leverage}x ({leverage_mode})")
+        try:
+            adapter.set_leverage(coin, user_leverage, leverage_mode)
+            print("✅ Leverage set")
+        except Exception as e:
+            print("⚠️ Unable to set leverage:", e)
+except Exception as e:
+    print("⚠️ Leverage configuration error:", e)
 
 # --- Flask --- main webhook---------------------------------------------------------------------------------
 app = Flask(__name__)
@@ -302,47 +282,39 @@ def execute_buy_order():
     print("🚀 Executing market BUY order...")
 
     quote_asset = SYMBOL.split('/')[1]
-    symbol_binance = SYMBOL.replace('/', '')
     
     try:
-        client.get_symbol_info(symbol_binance)
-        bal = client.get_asset_balance(asset=quote_asset)
-        print("BAL:", bal)
+        withdrawable = adapter.get_withdrawable_usdc()
+        if withdrawable is None:
+            raise Exception("Unable to fetch withdrawable USDC.")
+        balance = float(withdrawable)
+        print(f"{quote_asset} Withdrawable:", balance)
     except Exception as e:
-        print("💥 Error fetching balance:", e)
-        return
-
-    try:
-        balance = float(bal['free'])
-        print(f"{quote_asset} Balance:", balance)
-    except Exception as e:
-        print("💥 Error parsing balance:", e)
+        print("💥 Error fetching withdrawable margin:", e)
         return
 
     if balance <= 0:
         raise Exception(f"Insufficient {quote_asset} balance.")
 
     capital_to_use = balance * CAPITAL_ALLOCATION_PERCENT
-    ticker         = client.get_symbol_ticker(symbol=symbol_binance)
-    current_price  = float(ticker['price'])
-    quantity_unrounded       = capital_to_use / current_price
+    current_price  = adapter.get_mid_price(coin)
+    if current_price is None:
+        raise Exception("Unable to fetch current mid price.")
+    quantity_unrounded       = capital_to_use / float(current_price)
     quantity = Decimal(quantity_unrounded).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
     
-    # round to LOT_SIZE precision for Binance
+    # round to market size precision
     quantity = float(quantity)
 
     print(f"🛒 Buying {quantity} {SYMBOL} at "
           f"${current_price} using ${capital_to_use:.2f}")
-    order = client.order_market_buy(
-                symbol=symbol_binance,
-                quantity=quantity
-            )
+    avg_price, filled_size = adapter.place_market_buy(coin, float(quantity))
 
     in_position = True
     buy_time    = datetime.datetime.utcnow()
 
-    entry_price       = float(order['fills'][0]['price'])
-    position_quantity = float(Decimal(quantity).quantize(Decimal("0.001"), rounding=ROUND_DOWN))
+    entry_price       = float(avg_price)
+    position_quantity = float(Decimal(filled_size).quantize(Decimal("0.001"), rounding=ROUND_DOWN))
     
     # Calculate break-even and target profit prices
     break_even_price = calculate_break_even_price(entry_price)
@@ -370,11 +342,7 @@ def execute_sell_order(sell_reason="normal sell"):
     global highest_price, break_even_price
 
     print(f"📉 Executing market SELL order (Reason: {sell_reason})")
-    symbol_binance = SYMBOL.replace('/', '')
-    order     = client.order_market_sell(
-                    symbol=symbol_binance,
-                    quantity=position_quantity
-                )
+    avg_price, filled_size = adapter.place_market_sell_reduce_only(coin, position_quantity)
 
     in_position = False
     sell_time   = datetime.datetime.utcnow()
@@ -382,9 +350,8 @@ def execute_sell_order(sell_reason="normal sell"):
     time_diff   = (sell_time - buy_time).total_seconds() \
                   if buy_time else None
 
-    print("✅ Sell order response:", order)
-
-    sell_price = float(order['fills'][0]['price'])
+    print("✅ Sell order filled size:", filled_size)
+    sell_price = float(avg_price)
 
     buy_cost     = (entry_price * position_quantity) \
                    + (entry_price * position_quantity * TRADING_FEE_RATE)
@@ -423,12 +390,12 @@ def monitor_position(entry):
     global highest_price, break_even_price, target_profit_price
     
     print("🛡️ Position monitoring activated. Tracking stop-loss and profit target...")
-    symbol_binance = SYMBOL.replace('/', '')
     
     while not stop_safety_net.is_set():
         try:
-            ticker        = client.get_symbol_ticker(symbol=symbol_binance)
-            current_price = float(ticker['price'])
+            current_price = adapter.get_mid_price(coin)
+            if current_price is None:
+                raise Exception("No price returned")
             
             # Update highest price
             if highest_price is None or current_price > highest_price:
