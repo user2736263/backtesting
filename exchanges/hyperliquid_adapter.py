@@ -243,19 +243,65 @@ class HyperliquidAdapter:
             return None
 
     def get_withdrawable_usdc(self) -> Optional[float]:
+        """
+        Get available USDC balance for perps trading.
+        Tries multiple paths in user_state response structure.
+        """
         try:
             state = self.info.user_state(self.owner_address)
-            for key in ("withdrawable", "freeCollateral"):
+            
+            # Debug: log structure for troubleshooting (first call only)
+            if not hasattr(self, '_debug_logged_state'):
+                import json
+                state_str = json.dumps(state, indent=2)[:1000]  # First 1000 chars
+                print(f"DEBUG user_state keys: {list(state.keys()) if isinstance(state, dict) else 'not dict'}")
+                print(f"DEBUG user_state sample:\n{state_str}")
+                self._debug_logged_state = True
+            
+            # Path 1: Check marginSummary nested structure
+            if "marginSummary" in state and isinstance(state["marginSummary"], dict):
+                margin_summary = state["marginSummary"]
+                for key in ("withdrawable", "freeCollateral", "freeCollateralValue", "accountValue"):
+                    if key in margin_summary:
+                        try:
+                            val = float(margin_summary[key])
+                            if val > 0:
+                                return val
+                        except (ValueError, TypeError):
+                            pass
+            
+            # Path 2: Check cross margin summary (if present)
+            if "crossMaintenanceMarginUsed" in state and "accountValue" in state:
+                try:
+                    account_val = float(state["accountValue"])
+                    margin_used = float(state.get("crossMaintenanceMarginUsed", 0))
+                    # Available = account value - margin used
+                    available = account_val - margin_used
+                    if available > 0:
+                        return available
+                except (ValueError, TypeError):
+                    pass
+            
+            # Path 3: Direct top-level fields
+            for key in ("withdrawable", "freeCollateral", "freeCollateralValue"):
                 if key in state:
                     try:
-                        return float(state[key])
-                    except Exception:
+                        val = float(state[key])
+                        if val > 0:
+                            return val
+                    except (ValueError, TypeError):
                         pass
-            # Fallback to accountValue if no explicit withdrawable field is present
+            
+            # Path 4: accountValue as fallback (total account value, not ideal but better than 0)
             if "accountValue" in state:
-                return float(state["accountValue"])  # type: ignore
-            return None
-        except Exception:
+                try:
+                    return float(state["accountValue"])
+                except (ValueError, TypeError):
+                    pass
+            
+            return 0.0  # Explicit 0 if nothing found
+        except Exception as e:
+            print(f"⚠️ Error fetching withdrawable USDC: {e}")
             return None
 
     def get_position(self, coin: str) -> Tuple[float, Optional[float]]:
