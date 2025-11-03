@@ -69,32 +69,58 @@ class HyperliquidAdapter:
     # ---- Public methods -------------------------------------------------------------------------
     def set_leverage(self, coin: str, leverage: float, mode: str = "cross") -> None:
         """
-        Set leverage for a perp market. Cross is default; isolated may require additional args
-        depending on SDK version. Non-critical - gracefully handles SDK variations.
+        Set leverage for a perp market using Hyperliquid's updateLeverage action.
+        Must work correctly - leverage is critical for position sizing.
         """
-        # Try common method names across SDK versions
         try:
-            if hasattr(self.exchange, "update_leverage"):
-                # Try with is_cross parameter (newer SDK versions)
-                try:
-                    self.exchange.update_leverage(coin, int(leverage), is_cross=(mode == "cross"))
-                    return
-                except TypeError:
-                    # Fallback: try without is_cross parameter
-                    self.exchange.update_leverage(coin, int(leverage))
-                    return
-            if hasattr(self.exchange, "updateLeverage"):
-                self.exchange.updateLeverage(coin, int(leverage))
-                return
+            # Get asset index for the coin
+            asset_index = self._get_asset_index(coin)
+            
+            # Use the SDK's update_leverage method with correct parameters
+            # The SDK expects: asset (int), is_cross (bool), leverage (int)
+            is_cross = (mode == "cross")
+            lev_int = int(leverage)
+            
+            # Try the standard SDK method signature
+            result = self.exchange.update_leverage(asset_index, is_cross, lev_int)
+            
+            print(f"✅ Leverage set to {lev_int}x ({'cross' if is_cross else 'isolated'}) for {coin}")
+            return result
+            
         except Exception as e:
-            # Log but don't crash - leverage can be set manually in UI
-            print(f"⚠️ Leverage update failed (non-critical): {e}")
-            print(f"   Set leverage manually in Hyperliquid UI for {coin} if needed.")
-            return
-
-        # If we reach here, SDK doesn't expose leverage update - not critical
-        print(f"⚠️ SDK doesn't expose leverage update method.")
-        print(f"   Set leverage manually in Hyperliquid UI for {coin} if needed.")
+            # This is critical - raise the error so caller knows leverage failed
+            raise RuntimeError(f"Failed to set leverage for {coin}: {e}")
+    
+    def _get_asset_index(self, coin: str) -> int:
+        """Get the asset index for a coin symbol. Uses meta if available, otherwise tries common mappings."""
+        try:
+            meta = self.get_symbol_meta()
+            # Try to find asset index in meta
+            if "universe" in meta:
+                for idx, asset in enumerate(meta["universe"]):
+                    if isinstance(asset, dict):
+                        name = asset.get("name", "").upper()
+                    else:
+                        name = str(asset).upper()
+                    if name == coin.upper():
+                        return idx
+        except Exception:
+            pass
+        
+        # Fallback: common asset indices (may need updates)
+        common_indices = {
+            "BTC": 0,
+            "ETH": 1,
+            "SOL": 2,
+            "ARB": 3,
+            "AVAX": 4,
+        }
+        
+        if coin.upper() in common_indices:
+            return common_indices[coin.upper()]
+        
+        # If we can't find it, raise error
+        raise ValueError(f"Unable to determine asset index for {coin}. Check Hyperliquid meta or update mapping.")
 
     def get_symbol_meta(self) -> Dict[str, Any]:
         """Return cached market meta; fetch once from Info if needed."""
