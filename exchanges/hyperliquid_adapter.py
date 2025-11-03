@@ -359,18 +359,30 @@ class HyperliquidAdapter:
         """
         size = self._round_size(coin, size_base)
         if size <= 0:
-            raise ValueError("Requested market sell size rounds to zero based on sizeIncrement.")
+            # Fallback to on-chain position size if provided size is invalid
+            pos_sz, _ = self.get_position(coin)
+            size = self._round_size(coin, float(pos_sz)) if pos_sz else 0.0
 
         try:
             # Prefer SDK helper which submits reduce-only limit IOC
             if hasattr(self.exchange, "market_close"):
-                resp = self.exchange.market_close(coin, sz=size)
+                # If size is still zero, let SDK close based on detected position
+                if size and size > 0:
+                    resp = self.exchange.market_close(coin, sz=size)
+                else:
+                    resp = self.exchange.market_close(coin)
             else:
                 # Fallback: aggressive limit IOC a bit below mid
                 mid = self.get_mid_price(coin)
                 if not mid or mid <= 0:
                     raise RuntimeError("No mid price available")
                 px = round(mid * 0.98, 6)
+                # If size is still zero, attempt using full position size
+                if not size or size <= 0:
+                    pos_sz, _ = self.get_position(coin)
+                    size = self._round_size(coin, float(pos_sz)) if pos_sz else 0.0
+                if not size or size <= 0:
+                    raise ValueError("No open position size found for reduce-only sell.")
                 resp = self.exchange.order(coin, False, size, px, {"limit": {"tif": "Ioc"}}, reduce_only=True)
             return self._extract_avg_fill(resp)
         except Exception as e:
