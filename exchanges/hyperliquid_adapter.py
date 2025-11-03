@@ -378,6 +378,14 @@ class HyperliquidAdapter:
             avg_px, filled_sz = self._extract_avg_fill(resp)
             if not filled_sz or filled_sz <= 0:
                 raise RuntimeError(f"Order submitted but not filled. Response: {resp}")
+            
+            # Check for partial fill and cancel any remaining open orders
+            if filled_sz < size:
+                unfilled = size - filled_sz
+                print(f"⚠️ Partial fill detected: {filled_sz}/{size} filled, {unfilled} unfilled")
+                self._cancel_open_orders(coin)
+                print(f"✅ Cancelled remaining open orders for {coin}")
+            
             return avg_px, filled_sz
         except Exception as e:
             raise RuntimeError(f"Market buy failed: {e}")
@@ -424,11 +432,54 @@ class HyperliquidAdapter:
             avg_px, filled_sz = self._extract_avg_fill(resp)
             if not filled_sz or filled_sz <= 0:
                 raise RuntimeError(f"Order submitted but not filled. Response: {resp}")
+            
+            # Check for partial fill and cancel any remaining open orders
+            if size > 0 and filled_sz < size:
+                unfilled = size - filled_sz
+                print(f"⚠️ Partial fill detected: {filled_sz}/{size} filled, {unfilled} unfilled")
+                self._cancel_open_orders(coin)
+                print(f"✅ Cancelled remaining open orders for {coin}")
+            
             return avg_px, filled_sz
         except Exception as e:
             raise RuntimeError(f"Reduce-only market sell failed: {e}")
 
     # ---- Response helpers -----------------------------------------------------------------------
+    def _cancel_open_orders(self, coin: str) -> None:
+        """Cancel all open orders for a given coin."""
+        try:
+            # Get open orders for this user
+            if hasattr(self.info, "open_orders"):
+                open_orders = self.info.open_orders(self.owner_address)
+            elif hasattr(self.info, "user_state"):
+                # Some SDK versions include open orders in user_state
+                state = self.info.user_state(self.owner_address)
+                open_orders = state.get("openOrders", [])
+            else:
+                print(f"⚠️ Cannot fetch open orders - SDK method not found")
+                return
+            
+            if not open_orders:
+                return
+            
+            # Find and cancel orders for this coin
+            cancelled_count = 0
+            for order in open_orders:
+                order_coin = (order.get("coin") or order.get("symbol") or "").upper()
+                if order_coin == coin.upper():
+                    oid = order.get("oid")
+                    if oid is not None:
+                        try:
+                            self.exchange.cancel(coin, oid)
+                            cancelled_count += 1
+                        except Exception as e:
+                            print(f"⚠️ Failed to cancel order {oid}: {e}")
+            
+            if cancelled_count > 0:
+                print(f"🗑️ Cancelled {cancelled_count} open order(s) for {coin}")
+        except Exception as e:
+            print(f"⚠️ Error cancelling open orders for {coin}: {e}")
+    
     def _extract_avg_fill(self, resp: Any) -> Tuple[float, float]:
         """
         Try to extract (avg_price, filled_size) from a variety of SDK response shapes.
