@@ -443,27 +443,35 @@ class HyperliquidAdapter:
             print(f"DEBUG _extract_avg_fill received (non-JSON): {str(resp)[:500]}")
         
         try:
+            # Unwrap Hyperliquid API response if present: {"status": "ok", "response": {"data": {...}}}
+            data = resp
+            if isinstance(resp, dict) and "response" in resp:
+                if isinstance(resp["response"], dict) and "data" in resp["response"]:
+                    data = resp["response"]["data"]
+                    print(f"DEBUG unwrapped response.data")
+            
             # Common shapes
             # 1) { "filled": [{ "px": 123.45, "sz": 0.5 }, ...] }
-            if isinstance(resp, dict) and "filled" in resp and isinstance(resp["filled"], list):
-                fills = resp["filled"]
+            if isinstance(data, dict) and "filled" in data and isinstance(data["filled"], list):
+                fills = data["filled"]
                 if fills:
                     total_sz = sum(float(f.get("sz", 0.0)) for f in fills)
                     if total_sz > 0:
                         vwap = sum(float(f.get("px", 0.0)) * float(f.get("sz", 0.0)) for f in fills) / total_sz
                         return float(vwap), float(total_sz)
             # 2) { "avgPx": 123.45, "filledSz": 0.5 }
-            if isinstance(resp, dict) and "avgPx" in resp and "filledSz" in resp:
-                return float(resp["avgPx"]), float(resp["filledSz"])
+            if isinstance(data, dict) and "avgPx" in data and "filledSz" in data:
+                return float(data["avgPx"]), float(data["filledSz"])
             # 3) { "statuses": [ { "filled": {...} } ] } - Hyperliquid format
-            if isinstance(resp, dict) and "statuses" in resp and isinstance(resp["statuses"], list):
-                for status in resp["statuses"]:
+            if isinstance(data, dict) and "statuses" in data and isinstance(data["statuses"], list):
+                for status in data["statuses"]:
                     if isinstance(status, dict) and "filled" in status:
                         filled = status["filled"]
                         if isinstance(filled, dict):
                             px = filled.get("avgPx") or filled.get("px")
                             sz = filled.get("totalSz") or filled.get("sz")
                             if px and sz:
+                                print(f"✅ Extracted fill: {sz} @ {px}")
                                 return float(px), float(sz)
         except Exception as e:
             print(f"⚠️ Error parsing fill response: {e}")
