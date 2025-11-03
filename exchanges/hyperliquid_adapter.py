@@ -340,6 +340,10 @@ class HyperliquidAdapter:
         if size <= 0:
             raise ValueError("Requested market buy size rounds to zero based on sizeIncrement.")
 
+        # Snapshot position size before placing the order
+        pre_sz, _ = self.get_position(coin)
+        pre_sz = float(pre_sz or 0.0)
+
         try:
             # Prefer SDK helper which submits limit IOC under the hood
             if hasattr(self.exchange, "market_open"):
@@ -351,7 +355,13 @@ class HyperliquidAdapter:
                     raise RuntimeError("No mid price available")
                 px = round(mid * 1.02, 6)
                 resp = self.exchange.order(coin, True, size, px, {"limit": {"tif": "Ioc"}}, reduce_only=False)
-            return self._extract_avg_fill(resp)
+            avg_px, filled_sz = self._extract_avg_fill(resp)
+            if filled_sz and filled_sz > 0:
+                return avg_px, filled_sz
+
+            # If fill not returned, poll for a short time to detect position increase
+            post_px, delta_sz = self._poll_position_fill(coin, pre_sz, expect_increase=True)
+            return (post_px if post_px is not None else float(self.get_mid_price(coin) or 0.0), float(delta_sz or 0.0))
         except Exception as e:
             raise RuntimeError(f"Market buy failed: {e}")
 
@@ -368,6 +378,10 @@ class HyperliquidAdapter:
                 size = self._round_size(coin, float(pos_sz))
             else:
                 size = 0.0
+
+        # Snapshot position before placing the order
+        pre_sz, _ = self.get_position(coin)
+        pre_sz = float(pre_sz or 0.0)
 
         try:
             # Prefer SDK helper which submits reduce-only limit IOC
@@ -393,7 +407,13 @@ class HyperliquidAdapter:
                 if not size or size <= 0:
                     raise ValueError("No open position size found for reduce-only sell.")
                 resp = self.exchange.order(coin, False, size, px, {"limit": {"tif": "Ioc"}}, reduce_only=True)
-            return self._extract_avg_fill(resp)
+            avg_px, filled_sz = self._extract_avg_fill(resp)
+            if filled_sz and filled_sz > 0:
+                return avg_px, filled_sz
+
+            # If fill not returned, poll for a short time to detect position decrease
+            post_px, delta_sz = self._poll_position_fill(coin, pre_sz, expect_increase=False)
+            return (post_px if post_px is not None else float(self.get_mid_price(coin) or 0.0), float(delta_sz or 0.0))
         except Exception as e:
             raise RuntimeError(f"Reduce-only market sell failed: {e}")
 
@@ -416,12 +436,55 @@ class HyperliquidAdapter:
             # 2) { "avgPx": 123.45, "filledSz": 0.5 }
             if isinstance(resp, dict) and "avgPx" in resp and "filledSz" in resp:
                 return float(resp["avgPx"]), float(resp["filledSz"])
+            # 3) { "statuses": [ { "filled": [...], "avgPx": ..., "filledSz": ... }, ... ] }
+            if isinstance(resp, dict) and "statuses" in resp and isinstance(resp["statuses"], list):
+                total_sz = 0.0
+                vwap_num = 0.0
+                for st in resp["statuses"]:
+                    if isinstance(st, dict):
+                        # Prefer explicit fields if present
+                        if "filledSz" in st and "avgPx" in st:
+                            try:
+                                sz = float(st["filledSz"])
+                                px = float(st["avgPx"])
+                                vwap_num += px * sz
+                                total_sz += sz
+                                continue
+                            except Exception:
+                                pass
+                        # Else aggregate fills
+                        fills = st.get("filled")
+                        if isinstance(fills, list):
+                            for f in fills:
+                                try:
+                                    px = float(f.get("px", 0.0))
+                                    sz = float(f.get("sz", 0.0))
+                                    vwap_num += px * sz
+                                    total_sz += sz
+                                except Exception:
+                                    pass
+                if total_sz > 0:
+                    return vwap_num / total_sz, total_sz
         except Exception:
             pass
 
         # Fallbacks
         mid = self.get_mid_price("SOL")  # small best-effort default; caller may ignore
         return float(mid or 0.0), 0.0
+
+    def _poll_position_fill(self, coin: str, pre_size: float, expect_increase: bool, timeout_s: float = 2.0, interval_s: float = 0.2) -> Tuple[Optional[float], Optional[float]]:
+        """Poll user_state briefly to detect size change and get entry price.
+        Returns (entry_price, delta_size)."""
+        import time as _time
+        deadline = _time.time() + timeout_s
+        while _time.time() < deadline:
+            cur_sz, entry_px = self.get_position(coin)
+            cur_sz = float(cur_sz or 0.0)
+            delta = cur_sz - pre_size
+            if (expect_increase and delta > 0) or ((not expect_increase) and delta < 0):
+                return (entry_px, abs(delta))
+            _time.sleep(interval_s)
+        return (None, None)
 
 
 def from_env() -> "HyperliquidAdapter":
