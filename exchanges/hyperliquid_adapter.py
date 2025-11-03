@@ -337,12 +337,17 @@ class HyperliquidAdapter:
         if size <= 0:
             raise ValueError("Requested market buy size rounds to zero based on sizeIncrement.")
 
-        # Use IOC market order; SDKs typically encode market orders with tif=Ioc
-        order_spec = {"market": {"tif": "Ioc"}}
-
         try:
-            # Common signature: order(coin, is_buy, size, price, order_type)
-            resp = self.exchange.order(coin, True, size, 0.0, order_spec)  # type: ignore[attr-defined]
+            # Prefer SDK helper which submits limit IOC under the hood
+            if hasattr(self.exchange, "market_open"):
+                resp = self.exchange.market_open(coin, True, size)
+            else:
+                # Fallback: aggressive limit IOC a bit above mid
+                mid = self.get_mid_price(coin)
+                if not mid or mid <= 0:
+                    raise RuntimeError("No mid price available")
+                px = round(mid * 1.02, 6)
+                resp = self.exchange.order(coin, True, size, px, {"limit": {"tif": "Ioc"}}, reduce_only=False)
             return self._extract_avg_fill(resp)
         except Exception as e:
             raise RuntimeError(f"Market buy failed: {e}")
@@ -356,10 +361,17 @@ class HyperliquidAdapter:
         if size <= 0:
             raise ValueError("Requested market sell size rounds to zero based on sizeIncrement.")
 
-        order_spec = {"market": {"tif": "Ioc", "reduceOnly": True}}
-
         try:
-            resp = self.exchange.order(coin, False, size, 0.0, order_spec)  # type: ignore[attr-defined]
+            # Prefer SDK helper which submits reduce-only limit IOC
+            if hasattr(self.exchange, "market_close"):
+                resp = self.exchange.market_close(coin, sz=size)
+            else:
+                # Fallback: aggressive limit IOC a bit below mid
+                mid = self.get_mid_price(coin)
+                if not mid or mid <= 0:
+                    raise RuntimeError("No mid price available")
+                px = round(mid * 0.98, 6)
+                resp = self.exchange.order(coin, False, size, px, {"limit": {"tif": "Ioc"}}, reduce_only=True)
             return self._extract_avg_fill(resp)
         except Exception as e:
             raise RuntimeError(f"Reduce-only market sell failed: {e}")
