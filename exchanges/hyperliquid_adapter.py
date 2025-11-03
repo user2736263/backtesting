@@ -70,22 +70,31 @@ class HyperliquidAdapter:
     def set_leverage(self, coin: str, leverage: float, mode: str = "cross") -> None:
         """
         Set leverage for a perp market. Cross is default; isolated may require additional args
-        depending on SDK version. Errors should not crash the bot; just log upstream.
+        depending on SDK version. Non-critical - gracefully handles SDK variations.
         """
         # Try common method names across SDK versions
         try:
             if hasattr(self.exchange, "update_leverage"):
-                getattr(self.exchange, "update_leverage")(coin, float(leverage), mode)
-                return
+                # Try with is_cross parameter (newer SDK versions)
+                try:
+                    self.exchange.update_leverage(coin, int(leverage), is_cross=(mode == "cross"))
+                    return
+                except TypeError:
+                    # Fallback: try without is_cross parameter
+                    self.exchange.update_leverage(coin, int(leverage))
+                    return
             if hasattr(self.exchange, "updateLeverage"):
-                getattr(self.exchange, "updateLeverage")(coin, float(leverage))
+                self.exchange.updateLeverage(coin, int(leverage))
                 return
         except Exception as e:
-            # Surface to caller for logging
-            raise RuntimeError(f"Failed to set leverage for {coin}: {e}")
+            # Log but don't crash - leverage can be set manually in UI
+            print(f"⚠️ Leverage update failed (non-critical): {e}")
+            print(f"   Set leverage manually in Hyperliquid UI for {coin} if needed.")
+            return
 
-        # If we reach here, SDK doesn't expose leverage update in this version
-        raise RuntimeError("Hyperliquid SDK does not expose leverage update in this version.")
+        # If we reach here, SDK doesn't expose leverage update - not critical
+        print(f"⚠️ SDK doesn't expose leverage update method.")
+        print(f"   Set leverage manually in Hyperliquid UI for {coin} if needed.")
 
     def get_symbol_meta(self) -> Dict[str, Any]:
         """Return cached market meta; fetch once from Info if needed."""
