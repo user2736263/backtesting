@@ -133,7 +133,10 @@ def position_closed():
 # Load configuration from environment variables with defaults
 SYMBOL                 = os.getenv("SYMBOL", "SOL/USDC")
 STOP_LOSS_PERCENT      = float(os.getenv("STOP_LOSS_PERCENT", "0.007"))
-TRADING_FEE_RATE       = float(os.getenv("TRADING_FEE_RATE", "0.001"))
+# Fee rates (bot uses market orders = taker fees)
+TAKER_FEE_RATE         = float(os.getenv("TAKER_FEE_RATE", "0.000432"))  # 0.0432%
+MAKER_FEE_RATE         = float(os.getenv("MAKER_FEE_RATE", "0.000144"))  # 0.0144% (future use)
+TRADING_FEE_RATE       = TAKER_FEE_RATE  # Bot uses market orders (taker)
 TRADE_COOLDOWN         = int(os.getenv("TRADE_COOLDOWN", "600"))
 CAPITAL_ALLOCATION_PERCENT = float(os.getenv("CAPITAL_ALLOCATION_PERCENT", "0.11"))
 TARGET_PROFIT_PERCENT  = float(os.getenv("TARGET_PROFIT_PERCENT", "0.001"))

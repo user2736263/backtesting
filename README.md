@@ -235,7 +235,8 @@ All configuration is currently in `app.py`. Key parameters:
 |-----------|--------------|-------------|
 | `SYMBOL` | `"SOL/USDC"` | Trading pair (format: BASE/QUOTE) |
 | `STOP_LOSS_PERCENT` | `0.007` | Stop-loss percentage (0.7%) |
-| `TRADING_FEE_RATE` | `0.001` | Taker fee estimate |
+| `TAKER_FEE_RATE` | `0.000432` | Hyperliquid taker fee (0.0432%) |
+| `MAKER_FEE_RATE` | `0.000144` | Hyperliquid maker fee (0.0144%) - future use |
 | `TRADE_COOLDOWN` | `600` | Seconds between trades (10 minutes) |
 | Capital Allocation | `11%` | Percentage of USDC balance per trade (hardcoded: `0.11` in line 302) |
 
