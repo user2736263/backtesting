@@ -1,6 +1,7 @@
 import os
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Dict, Optional, Tuple
+import inspect
 
 
 try:
@@ -75,57 +76,75 @@ class HyperliquidAdapter:
         is_cross = (mode == "cross")
         lev_int = int(leverage)
 
-        # Resolve asset index if needed by certain SDK signatures
+        # Resolve asset index using meta when available
         asset_index = None
         try:
             asset_index = self._get_asset_index(coin)
         except Exception:
             pass
 
-        errors = []
-
-        # Candidate method names
-        method_names = [
-            "update_leverage",
-            "updateLeverage",
-        ]
-
-        # Candidate argument patterns: (args, kwargs)
-        candidates = []
-        # By coin first
-        candidates.append(((coin, lev_int), {"is_cross": is_cross}))
-        candidates.append(((coin, lev_int, is_cross), {}))
-        candidates.append(((coin, is_cross, lev_int), {}))
-        candidates.append(((coin,), {"leverage": lev_int, "is_cross": is_cross}))
-        # By asset index if available
-        if asset_index is not None:
-            candidates.append(((asset_index, is_cross, lev_int), {}))
-            candidates.append(((asset_index, lev_int, is_cross), {}))
-            candidates.append(((asset_index,), {"is_cross": is_cross, "leverage": lev_int}))
-
-        for name in method_names:
+        # 1) Prefer the documented SDK signature: update_leverage(leverage, coin, is_cross=True)
+        for name in ("update_leverage", "updateLeverage"):
             fn = getattr(self.exchange, name, None)
             if fn is None or not callable(fn):
                 continue
-            for args, kwargs in candidates:
-                try:
-                    result = fn(*args, **kwargs)
-                    # Consider success if no exception; some SDKs return True/dict/None
-                    print(
-                        f"✅ Leverage set to {lev_int}x ({'cross' if is_cross else 'isolated'}) for {coin} via {name}{args}"
-                    )
-                    return result
-                except TypeError as te:
-                    # Signature mismatch; try next candidate
-                    errors.append(str(te))
-                    continue
-                except Exception as e:
-                    errors.append(str(e))
-                    continue
 
-        raise RuntimeError(
-            f"Failed to set leverage for {coin}: " + (errors[-1] if errors else "unknown error")
-        )
+            try:
+                # Positional order per examples: (leverage, coin, is_cross)
+                result = fn(lev_int, coin, is_cross)
+                print(f"✅ Leverage set to {lev_int}x ({'cross' if is_cross else 'isolated'}) for {coin} via {name}(lev, coin, is_cross)")
+                return result
+            except TypeError:
+                # Fall through to robust introspection-based kwargs approach
+                pass
+            except Exception as e:
+                last_error = e
+                # Try the next variant
+                pass
+
+        # 2) Robust fallback: introspect signature and supply only matching kwargs/args
+        for name in ("update_leverage", "updateLeverage"):
+            fn = getattr(self.exchange, name, None)
+            if fn is None or not callable(fn):
+                continue
+            try:
+                sig = inspect.signature(fn)
+            except Exception:
+                sig = None
+
+            kwargs: Dict[str, Any] = {}
+            if sig is not None:
+                params = [p.name for p in sig.parameters.values() if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)]
+                name_map: Dict[str, Any] = {
+                    "leverage": lev_int,
+                    "coin": coin,
+                    "symbol": coin,
+                    "market": coin,
+                    "asset": asset_index,
+                    "asset_index": asset_index,
+                    "is_cross": is_cross,
+                    "isCross": is_cross,
+                    "cross": is_cross,
+                }
+                for p in params:
+                    if p in name_map and name_map[p] is not None:
+                        kwargs[p] = name_map[p]
+            else:
+                # If we cannot introspect, prefer asset index form
+                if asset_index is not None:
+                    kwargs = {"asset": asset_index, "is_cross": is_cross, "leverage": lev_int}
+                else:
+                    kwargs = {"coin": coin, "is_cross": is_cross, "leverage": lev_int}
+
+            try:
+                result = fn(**kwargs)
+                print(f"✅ Leverage set to {lev_int}x ({'cross' if is_cross else 'isolated'}) for {coin} via {name}(**kwargs)")
+                return result
+            except Exception as e:
+                last_error = e
+                continue
+
+        raise RuntimeError(f"Failed to set leverage for {coin}: {last_error if 'last_error' in locals() else 'no compatible method found'}")
     
     def _get_asset_index(self, coin: str) -> int:
         """Get the asset index for a coin symbol. Uses meta if available, otherwise tries common mappings."""
