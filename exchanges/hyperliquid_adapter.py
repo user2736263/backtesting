@@ -317,11 +317,14 @@ class HyperliquidAdapter:
                     candidates = state[key]
                     break
             for pos in candidates:
-                pos_coin = (pos.get("coin") or pos.get("asset") or pos.get("symbol") or "").upper()
+                # Handle nested position structure: { "position": { "coin": "...", "szi": ... } }
+                pos_obj = pos.get("position", pos) if isinstance(pos, dict) else pos
+                pos_coin = (pos_obj.get("coin") or pos_obj.get("asset") or pos_obj.get("symbol") or "").upper()
                 if pos_coin == coin.upper():
                     # Common fields: szi (signed size), entryPx
-                    size = float(pos.get("szi") or pos.get("size") or 0.0)
-                    entry = pos.get("entryPx") or pos.get("entryPrice")
+                    size_raw = pos_obj.get("szi") or pos_obj.get("size") or 0.0
+                    size = float(size_raw) if size_raw is not None else 0.0
+                    entry = pos_obj.get("entryPx") or pos_obj.get("entryPrice")
                     entry_f = float(entry) if entry is not None else None
                     return size, entry_f
             return 0.0, None
@@ -361,7 +364,10 @@ class HyperliquidAdapter:
         if size <= 0:
             # Fallback to on-chain position size if provided size is invalid
             pos_sz, _ = self.get_position(coin)
-            size = self._round_size(coin, float(pos_sz)) if pos_sz else 0.0
+            if pos_sz is not None and pos_sz > 0:
+                size = self._round_size(coin, float(pos_sz))
+            else:
+                size = 0.0
 
         try:
             # Prefer SDK helper which submits reduce-only limit IOC
@@ -380,7 +386,10 @@ class HyperliquidAdapter:
                 # If size is still zero, attempt using full position size
                 if not size or size <= 0:
                     pos_sz, _ = self.get_position(coin)
-                    size = self._round_size(coin, float(pos_sz)) if pos_sz else 0.0
+                    if pos_sz is not None and pos_sz > 0:
+                        size = self._round_size(coin, float(pos_sz))
+                    else:
+                        size = 0.0
                 if not size or size <= 0:
                     raise ValueError("No open position size found for reduce-only sell.")
                 resp = self.exchange.order(coin, False, size, px, {"limit": {"tif": "Ioc"}}, reduce_only=True)
