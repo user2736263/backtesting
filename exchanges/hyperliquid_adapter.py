@@ -69,27 +69,63 @@ class HyperliquidAdapter:
     # ---- Public methods -------------------------------------------------------------------------
     def set_leverage(self, coin: str, leverage: float, mode: str = "cross") -> None:
         """
-        Set leverage for a perp market using Hyperliquid's updateLeverage action.
-        Must work correctly - leverage is critical for position sizing.
+        Set leverage for a perp market. Try multiple SDK signatures to ensure compatibility.
+        Raises on failure; caller may decide whether to continue.
         """
+        is_cross = (mode == "cross")
+        lev_int = int(leverage)
+
+        # Resolve asset index if needed by certain SDK signatures
+        asset_index = None
         try:
-            # Get asset index for the coin
             asset_index = self._get_asset_index(coin)
-            
-            # Use the SDK's update_leverage method with correct parameters
-            # The SDK expects: asset (int), is_cross (bool), leverage (int)
-            is_cross = (mode == "cross")
-            lev_int = int(leverage)
-            
-            # Try the standard SDK method signature
-            result = self.exchange.update_leverage(asset_index, is_cross, lev_int)
-            
-            print(f"✅ Leverage set to {lev_int}x ({'cross' if is_cross else 'isolated'}) for {coin}")
-            return result
-            
-        except Exception as e:
-            # This is critical - raise the error so caller knows leverage failed
-            raise RuntimeError(f"Failed to set leverage for {coin}: {e}")
+        except Exception:
+            pass
+
+        errors = []
+
+        # Candidate method names
+        method_names = [
+            "update_leverage",
+            "updateLeverage",
+        ]
+
+        # Candidate argument patterns: (args, kwargs)
+        candidates = []
+        # By coin first
+        candidates.append(((coin, lev_int), {"is_cross": is_cross}))
+        candidates.append(((coin, lev_int, is_cross), {}))
+        candidates.append(((coin, is_cross, lev_int), {}))
+        candidates.append(((coin,), {"leverage": lev_int, "is_cross": is_cross}))
+        # By asset index if available
+        if asset_index is not None:
+            candidates.append(((asset_index, is_cross, lev_int), {}))
+            candidates.append(((asset_index, lev_int, is_cross), {}))
+            candidates.append(((asset_index,), {"is_cross": is_cross, "leverage": lev_int}))
+
+        for name in method_names:
+            fn = getattr(self.exchange, name, None)
+            if fn is None or not callable(fn):
+                continue
+            for args, kwargs in candidates:
+                try:
+                    result = fn(*args, **kwargs)
+                    # Consider success if no exception; some SDKs return True/dict/None
+                    print(
+                        f"✅ Leverage set to {lev_int}x ({'cross' if is_cross else 'isolated'}) for {coin} via {name}{args}"
+                    )
+                    return result
+                except TypeError as te:
+                    # Signature mismatch; try next candidate
+                    errors.append(str(te))
+                    continue
+                except Exception as e:
+                    errors.append(str(e))
+                    continue
+
+        raise RuntimeError(
+            f"Failed to set leverage for {coin}: " + (errors[-1] if errors else "unknown error")
+        )
     
     def _get_asset_index(self, coin: str) -> int:
         """Get the asset index for a coin symbol. Uses meta if available, otherwise tries common mappings."""

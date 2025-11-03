@@ -173,6 +173,10 @@ except Exception as e:
 # --- Flask --- main webhook---------------------------------------------------------------------------------
 app = Flask(__name__)
 
+@app.route('/')
+def health():
+    return jsonify({"status": "ok", "service": "Hyperliquid Trading Bot"}), 200
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     global in_position, entry_price, position_quantity, \
