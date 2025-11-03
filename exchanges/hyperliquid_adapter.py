@@ -184,17 +184,25 @@ class HyperliquidAdapter:
             try:
                 if hasattr(self.info, "meta"):
                     self._meta = self.info.meta()  # type: ignore[assignment]
+                elif hasattr(self.info, "perps_meta_and_asset_ctxs"):
+                    # Alternative SDK method
+                    perps_data = self.info.perps_meta_and_asset_ctxs()  # type: ignore[assignment]
+                    if isinstance(perps_data, list) and len(perps_data) > 0:
+                        self._meta = {"perpMeta": perps_data[0]} if isinstance(perps_data[0], dict) else {}
+                    else:
+                        self._meta = {}
                 else:
                     # Fallback: some SDKs provide perp meta on info via a different call
                     # Use a generic call to trigger server-provided metadata.
                     # If unavailable, set empty meta and rely on sane defaults downstream.
                     self._meta = {}
-            except Exception:
+            except Exception as e:
+                print(f"DEBUG: Could not fetch meta: {e}")
                 self._meta = {}
         return self._meta or {}
 
     def _resolve_size_increment(self, coin: str) -> Decimal:
-        """Derive size increment Decimal from meta; fallback to 0.001 if unknown."""
+        """Derive size increment Decimal from meta; fallback to coin-specific defaults."""
         meta = self.get_symbol_meta()
         # Heuristic: meta structures often include coin configs under perpMeta/coins with szDecimals or sizeIncrement
         try:
@@ -206,16 +214,31 @@ class HyperliquidAdapter:
                     if "sizeIncrement" in c:
                         return Decimal(str(c["sizeIncrement"]))
                     if "szDecimals" in c:
-                        decimals = int(c["szDecimals"])  # e.g., 3 → 0.001
+                        decimals = int(c["szDecimals"])  # e.g., 3 → 0.001, 2 → 0.01
                         return Decimal(10) ** Decimal(-decimals)
         except Exception:
             pass
-        return Decimal("0.001")
+        
+        # Coin-specific fallbacks (common Hyperliquid perps)
+        size_increments = {
+            "SOL": Decimal("0.01"),
+            "BTC": Decimal("0.0001"),
+            "ETH": Decimal("0.001"),
+            "ARB": Decimal("1"),
+            "AVAX": Decimal("0.1"),
+            "MATIC": Decimal("1"),
+            "DOGE": Decimal("1"),
+        }
+        
+        return size_increments.get(coin.upper(), Decimal("0.001"))
 
     def _round_size(self, coin: str, size: float) -> float:
         inc = self._resolve_size_increment(coin)
         quantized = Decimal(size).quantize(inc, rounding=ROUND_DOWN)
-        return float(quantized)
+        rounded = float(quantized)
+        if abs(size - rounded) > 0.0001:  # Only log if rounding changed the value
+            print(f"DEBUG size rounding: {coin} {size:.6f} → {rounded:.6f} (increment: {inc})")
+        return rounded
 
     def get_mid_price(self, coin: str) -> Optional[float]:
         try:
