@@ -444,6 +444,94 @@ class HyperliquidAdapter:
         except Exception as e:
             raise RuntimeError(f"Reduce-only market sell failed: {e}")
 
+    def place_market_sell(self, coin: str, size_base: float) -> Tuple[float, float]:
+        """
+        Place a market sell to open/increase a short.
+        Returns (avg_fill_price, filled_size).
+        """
+        size = self._round_size(coin, size_base)
+        if size <= 0:
+            raise ValueError("Requested market sell size rounds to zero based on sizeIncrement.")
+
+        try:
+            # Use SDK helper market_open with is_buy=False
+            if hasattr(self.exchange, "market_open"):
+                resp = self.exchange.market_open(coin, False, size)
+            else:
+                # Fallback: aggressive limit IOC below mid
+                mid = self.get_mid_price(coin)
+                if not mid or mid <= 0:
+                    raise RuntimeError("No mid price available")
+                px = round(mid * 0.98, 6)
+                resp = self.exchange.order(coin, False, size, px, {"limit": {"tif": "Ioc"}}, reduce_only=False)
+            
+            avg_px, filled_sz = self._extract_avg_fill(resp)
+            if not filled_sz or filled_sz <= 0:
+                raise RuntimeError(f"Order submitted but not filled. Response: {resp}")
+            
+            # Check for partial fill and cancel remaining orders
+            if filled_sz < size:
+                unfilled = size - filled_sz
+                print(f"⚠️ Partial fill detected: {filled_sz}/{size} filled, {unfilled} unfilled")
+                self._cancel_open_orders(coin)
+                print(f"✅ Cancelled remaining open orders for {coin}")
+            
+            return avg_px, filled_sz
+        except Exception as e:
+            raise RuntimeError(f"Market sell (open short) failed: {e}")
+
+    def place_market_buy_reduce_only(self, coin: str, size_base: float) -> Tuple[float, float]:
+        """
+        Place a market buy reduce-only to close a short.
+        Returns (avg_fill_price, filled_size).
+        """
+        size = self._round_size(coin, size_base)
+        if size <= 0:
+            # Fallback to on-chain position size
+            pos_sz, _ = self.get_position(coin)
+            if pos_sz is not None and pos_sz < 0:
+                size = self._round_size(coin, abs(float(pos_sz)))
+            else:
+                size = 0.0
+
+        try:
+            # Use SDK helper market_close for shorts
+            if hasattr(self.exchange, "market_close"):
+                if size and size > 0:
+                    resp = self.exchange.market_close(coin, sz=size)
+                else:
+                    resp = self.exchange.market_close(coin)
+            else:
+                # Fallback: aggressive limit IOC above mid
+                mid = self.get_mid_price(coin)
+                if not mid or mid <= 0:
+                    raise RuntimeError("No mid price available")
+                px = round(mid * 1.02, 6)
+                if not size or size <= 0:
+                    pos_sz, _ = self.get_position(coin)
+                    if pos_sz is not None and pos_sz < 0:
+                        size = self._round_size(coin, abs(float(pos_sz)))
+                    else:
+                        size = 0.0
+                if not size or size <= 0:
+                    raise ValueError("No open short position size found for reduce-only buy.")
+                resp = self.exchange.order(coin, True, size, px, {"limit": {"tif": "Ioc"}}, reduce_only=True)
+            
+            avg_px, filled_sz = self._extract_avg_fill(resp)
+            if not filled_sz or filled_sz <= 0:
+                raise RuntimeError(f"Order submitted but not filled. Response: {resp}")
+            
+            # Check for partial fill
+            if filled_sz < size:
+                unfilled = size - filled_sz
+                print(f"⚠️ Partial fill detected: {filled_sz}/{size} filled, {unfilled} unfilled")
+                self._cancel_open_orders(coin)
+                print(f"✅ Cancelled remaining open orders for {coin}")
+            
+            return avg_px, filled_sz
+        except Exception as e:
+            raise RuntimeError(f"Market buy (close short) failed: {e}")
+
     # ---- Response helpers -----------------------------------------------------------------------
     def _cancel_open_orders(self, coin: str) -> None:
         """Cancel all open orders for a given coin."""

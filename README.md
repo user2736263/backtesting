@@ -26,16 +26,33 @@ An automated cryptocurrency trading bot for Hyperliquid perps that executes trad
 This trading bot is designed to automatically execute cryptocurrency trades on Hyperliquid (perpetual futures) based on webhook signals from external trading indicators or strategies. The bot provides:
 
 - **Automated Trade Execution**: Market buy/sell orders triggered via webhook
-- **Stop-Loss Protection**: Background monitoring thread automatically sells if price drops below threshold
-- **Position Management**: Tracks open positions and prevents duplicate trades
+- **Long and Short Positions**: Support for both long (bullish) and short (bearish) strategies
+- **Stop-Loss Protection**: Background monitoring thread automatically closes position if price breaches threshold
+- **Position Management**: Tracks open positions and prevents duplicate trades (one position at a time)
 - **Trade Cooldown**: Prevents overtrading with configurable cooldown periods
-- **Comprehensive Logging**: All trades logged to Google Sheets with detailed metrics
+- **Comprehensive Logging**: All trades logged to Google Sheets with detailed metrics including position type
 - **Emergency Controls**: Force exit and manual position management endpoints
 
 **Current Trading Pair**: SOL/USDC  
-**Default Stop-Loss**: 0.7% below entry price  
+**Default Stop-Loss**: 0.7% from entry price (configurable separately for longs and shorts)
 **Capital Allocation**: 11% of available USDC balance per trade  
 **Trade Cooldown**: 600 seconds (10 minutes)
+
+### Position Types
+
+The bot supports two types of positions:
+
+1. **Long Positions**: Profit when price goes up
+   - Opened with "buy" webhook when no position exists
+   - Closed with "sell" webhook
+   - Stop-loss triggers when price drops below threshold
+   - Profit target triggers when price rises above target
+
+2. **Short Positions**: Profit when price goes down
+   - Opened with "sell" webhook when no position exists
+   - Closed with "buy" webhook
+   - Stop-loss triggers when price rises above threshold
+   - Profit target triggers when price drops below target
 
 ---
 
@@ -81,23 +98,47 @@ External Trading Signal/Indicator
 - Flask server listens on `/webhook` endpoint (POST)
 - Receives JSON payload with `action` field ("buy" or "sell")
 - Validates cooldown period (prevents trades within 600 seconds of last trade)
-- Checks current position status (prevents duplicate buys/sells)
+- Checks current position status and position type (long/short)
 
-#### 2. **Buy Order Execution**
+**Webhook Behavior (Inverted Semantics)**:
+- **"buy" action**:
+  - If no position: Opens a **long** position
+  - If in short position: **Closes the short** position
+  - If in long position: Ignored
+- **"sell" action**:
+  - If no position: Opens a **short** position
+  - If in long position: **Closes the long** position
+  - If in short position: Ignored
+
+#### 2. **Long Position (Buy Order) Execution**
 - Validates sufficient USDC withdrawable margin
 - Calculates trade size: 11% of available USDC
 - Fetches current mid price for SOL/USDC
 - Calculates quantity with proper precision (sizeIncrement, default 0.001 SOL)
 - Executes market buy order via Hyperliquid perps (Agent Wallet)
-- Stores entry price, quantity, and timestamp
+- Stores entry price, quantity, position_side="long", and timestamp
+- Activates stop-loss monitoring thread
+
+#### 2b. **Short Position (Sell Order) Execution**
+- Validates sufficient USDC withdrawable margin
+- Calculates trade size: 11% of available USDC
+- Fetches current mid price for SOL/USDC
+- Calculates quantity with proper precision (sizeIncrement, default 0.001 SOL)
+- Executes market sell order via Hyperliquid perps (Agent Wallet)
+- Stores entry price, quantity, position_side="short", and timestamp
 - Activates stop-loss monitoring thread
 
 #### 3. **Stop-Loss Monitoring**
 - Background daemon thread runs continuously while position is open
 - Checks current price every 5 seconds
-- Calculates stop-loss threshold: `entry_price * (1 - 0.007)` = 0.7% below entry
-- If price drops to or below threshold:
-  - Attempts to execute sell order
+- **For Long Positions**:
+  - Stop-loss threshold: `entry_price * (1 - STOP_LOSS_PERCENT)` = 0.7% below entry
+  - Triggers when price drops to or below threshold
+- **For Short Positions**:
+  - Stop-loss threshold: `entry_price * (1 + STOP_LOSS_PERCENT_SHORT)` = 0.7% above entry
+  - Triggers when price rises to or above threshold
+- If threshold breached:
+  - Attempts to execute close order (sell for long, buy for short)
   - Falls back to force exit if sell fails
   - Logs trade with reason "stop loss triggered"
 
@@ -234,9 +275,10 @@ All configuration is currently in `app.py`. Key parameters:
 | Parameter | Default Value | Description |
 |-----------|--------------|-------------|
 | `SYMBOL` | `"SOL/USDC"` | Trading pair (format: BASE/QUOTE) |
-| `STOP_LOSS_PERCENT` | `0.007` | Stop-loss percentage (0.7%) |
-| `TAKER_FEE_RATE` | `0.000432` | Hyperliquid taker fee (0.0432%) |
-| `MAKER_FEE_RATE` | `0.000144` | Hyperliquid maker fee (0.0144%) - future use |
+| `STOP_LOSS_PERCENT` | `0.007` | Stop-loss percentage for long positions (0.7%) |
+| `STOP_LOSS_PERCENT_SHORT` | `0.007` | Stop-loss percentage for short positions (0.7%) |
+| `TAKER_FEE_RATE` | `0.000432` | Hyperliquid taker fee (0.0432%) - used on position open |
+| `MAKER_FEE_RATE` | `0.000144` | Hyperliquid maker fee (0.0144%) - used on position close |
 | `TRADE_COOLDOWN` | `600` | Seconds between trades (10 minutes) |
 | Capital Allocation | `11%` | Percentage of USDC balance per trade (hardcoded: `0.11` in line 302) |
 
@@ -369,24 +411,44 @@ curl -X POST http://localhost:5000/webhook \
 ### Test Endpoints
 
 #### `GET /test_buy`
-Executes a test buy order (bypasses webhook validation).
+Executes a test buy order to open a long position (bypasses webhook validation).
 
 **Response:**
 ```
 ✅ Test buy executed.
 ```
 
-**Use Case:** Testing buy logic without external webhook.
+**Use Case:** Testing long position opening logic without external webhook.
 
 #### `GET /test_sell`
-Executes a test sell order (bypasses webhook validation).
+Executes a test sell order to close a long position (bypasses webhook validation).
 
 **Response:**
 ```
 ✅ Test sell executed.
 ```
 
-**Use Case:** Testing sell logic without external webhook.
+**Use Case:** Testing long position closing logic without external webhook.
+
+#### `GET /test_short`
+Executes a test sell order to open a short position (bypasses webhook validation).
+
+**Response:**
+```
+✅ Test short executed.
+```
+
+**Use Case:** Testing short position opening logic without external webhook.
+
+#### `GET /test_close_short`
+Executes a test buy order to close a short position (bypasses webhook validation).
+
+**Response:**
+```
+✅ Test close short executed.
+```
+
+**Use Case:** Testing short position closing logic without external webhook.
 
 ### Emergency Endpoints
 
@@ -487,17 +549,46 @@ last_trade_timestamp = 0   # Last trade execution time (for cooldown)
    - Capture average fill price from order response
    - Calculate PnL with fees
 
-3. **PnL Calculation:**
+3. **PnL Calculation (Long Positions):**
    ```python
-   buy_cost = (entry_price * quantity) + (entry_price * quantity * 0.001)
-   sell_revenue = (sell_price * quantity) - (sell_price * quantity * 0.001)
+   # Long: Buy at entry, sell at exit
+   buy_cost = (entry_price * quantity) * (1 + TAKER_FEE_RATE)       # 0.0432% fee
+   sell_revenue = (sell_price * quantity) * (1 - MAKER_FEE_RATE)    # 0.0144% fee
    pnl = sell_revenue - buy_cost
    ```
 
 4. **Post-Sell Actions:**
-   - Log to Google Sheets
+   - Log to Google Sheets with position_side="long"
    - Clear position state
    - Stop monitoring thread
+
+### Short Position Logic
+
+1. **Opening Short:**
+   - Market sell order with `reduce_only=False` creates negative position
+   - Entry price = sell price (higher is better)
+   - Break-even = `entry_price * (1 - (TAKER_FEE_RATE + MAKER_FEE_RATE))`
+
+2. **Closing Short:**
+   - Market buy order with `reduce_only=True` closes negative position
+   - Exit price = buy price (lower is better for profit)
+
+3. **PnL Calculation (Short Positions):**
+   ```python
+   # Short: Sell at entry (high), buy back at exit (low)
+   sell_revenue = (entry_price * quantity) * (1 - TAKER_FEE_RATE)   # 0.0432% fee
+   buy_cost = (exit_price * quantity) * (1 + MAKER_FEE_RATE)        # 0.0144% fee
+   pnl = sell_revenue - buy_cost
+   # Profit when exit_price < entry_price
+   ```
+
+4. **Stop-Loss for Shorts:**
+   - Triggers when price goes UP: `entry_price * (1 + STOP_LOSS_PERCENT_SHORT)`
+   - Profit target when price goes DOWN: `break_even_price * (1 - TARGET_PROFIT_PERCENT)`
+
+5. **Price Tracking for Shorts:**
+   - **Highest price** = worst case (loss increases as price rises)
+   - **Lowest price** = best case (profit when price drops)
 
 ### Stop-Loss Monitoring
 
@@ -774,10 +865,20 @@ The bot outputs detailed logs to console with emoji indicators:
 4. PnL - Profit/Loss (with fees included)
 5. Time Diff - Duration position was held (seconds)
 6. Formatted Date Time - ISO timestamp of sell
-7. Sell Reason - Reason for sell ("normal sell", "stop loss triggered", "force exit")
+7. Sell Reason - Reason for sell ("normal sell", "stop loss triggered", "force exit", "webhook close long/short")
 8. Percent of Trade - Percentage calculation (entry_price/100 * pnl)
+9. Highest Price - Highest price reached during trade
+10. Highest % from Break-even - Percentage difference of highest price from break-even
+11. Lowest Price - Lowest price reached during trade
+12. Lowest/Highest Drawdown % - For longs: lowest drawdown from entry; For shorts: highest drawdown from entry
+13. **Position Type** - "long" or "short" (NEW)
 
 **Access:** View in Google Sheets, export to CSV for analysis
+
+**Analysis Tips:**
+- Filter by Position Type to analyze long vs short performance separately
+- Use "Lowest/Highest Drawdown %" to optimize stop-loss settings for each position type
+- Compare PnL between long and short positions to identify which strategy performs better
 
 ### [Removed] Email Notifications (not used)
 
