@@ -29,10 +29,10 @@ def get_gsheet_client():
 # Profit calculation functions
 def calculate_break_even_price(entry_price):
     """
-    Calculate the break-even price that covers total trading fees (0.2% = 0.1% buy + 0.1% sell)
-    Break-even price = entry_price * (1 + 0.002)
+    Calculate the break-even price that covers total trading fees.
+    Break-even price = entry_price * (1 + (TAKER_FEE_RATE + MAKER_FEE_RATE))
     """
-    total_fees = 2 * TRADING_FEE_RATE  # Buy fee + Sell fee
+    total_fees = TAKER_FEE_RATE + MAKER_FEE_RATE  # Buy (taker) + Sell (maker)
     break_even = entry_price * (1 + total_fees)
     return break_even
 
@@ -86,10 +86,8 @@ def force_exit():
         sell_price = float(sell_avg_px)
 
         qty_for_pnl = float(Decimal(filled_sz).quantize(Decimal("0.001"), rounding=ROUND_DOWN))
-        buy_cost     = (entry_price * qty_for_pnl) \
-                       + (entry_price * qty_for_pnl * TRADING_FEE_RATE)
-        sell_revenue = (sell_price * qty_for_pnl) \
-                       - (sell_price * qty_for_pnl * TRADING_FEE_RATE)
+        buy_cost     = (entry_price * qty_for_pnl) * (1 + TAKER_FEE_RATE)
+        sell_revenue = (sell_price * qty_for_pnl) * (1 - MAKER_FEE_RATE)
         pnl = sell_revenue - buy_cost
         percent_of_trade = entry_price/100 * pnl if entry_price else 0
         time_diff = (sell_time - buy_time).total_seconds() \
@@ -133,10 +131,9 @@ def position_closed():
 # Load configuration from environment variables with defaults
 SYMBOL                 = os.getenv("SYMBOL", "SOL/USDC")
 STOP_LOSS_PERCENT      = float(os.getenv("STOP_LOSS_PERCENT", "0.007"))
-# Fee rates (bot uses market orders = taker fees)
+# Fee rates
 TAKER_FEE_RATE         = float(os.getenv("TAKER_FEE_RATE", "0.000432"))  # 0.0432%
-MAKER_FEE_RATE         = float(os.getenv("MAKER_FEE_RATE", "0.000144"))  # 0.0144% (future use)
-TRADING_FEE_RATE       = TAKER_FEE_RATE  # Bot uses market orders (taker)
+MAKER_FEE_RATE         = float(os.getenv("MAKER_FEE_RATE", "0.000144"))  # 0.0144%
 TRADE_COOLDOWN         = int(os.getenv("TRADE_COOLDOWN", "600"))
 CAPITAL_ALLOCATION_PERCENT = float(os.getenv("CAPITAL_ALLOCATION_PERCENT", "0.11"))
 TARGET_PROFIT_PERCENT  = float(os.getenv("TARGET_PROFIT_PERCENT", "0.001"))
@@ -331,7 +328,7 @@ def execute_buy_order():
     highest_price = entry_price
     
     print(f"💰 Bought {position_quantity} of {SYMBOL} at ${entry_price:.6f}")
-    print(f"📊 BREAK-EVEN PRICE: ${break_even_price:.6f} (covers {2 * TRADING_FEE_RATE * 100}% total fees)")
+    print(f"📊 BREAK-EVEN PRICE: ${break_even_price:.6f} (covers {(TAKER_FEE_RATE + MAKER_FEE_RATE) * 100:.4f}% total fees)")
     print(f"🎯 TARGET PROFIT PRICE: ${target_profit_price:.6f} (target profit: {TARGET_PROFIT_PERCENT * 100}%)")
     print(f"📈 Starting highest price tracking at: ${highest_price:.6f}")
 
@@ -360,10 +357,8 @@ def execute_sell_order(sell_reason="normal sell"):
     print("✅ Sell order filled size:", filled_size)
     sell_price = float(avg_price)
 
-    buy_cost     = (entry_price * position_quantity) \
-                   + (entry_price * position_quantity * TRADING_FEE_RATE)
-    sell_revenue = (sell_price * position_quantity) \
-                   - (sell_price * position_quantity * TRADING_FEE_RATE)
+    buy_cost     = (entry_price * position_quantity) * (1 + TAKER_FEE_RATE)
+    sell_revenue = (sell_price * position_quantity) * (1 - MAKER_FEE_RATE)
     pnl = sell_revenue - buy_cost
     percent_of_trade = entry_price/100 * pnl
     
