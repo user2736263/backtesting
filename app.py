@@ -47,7 +47,7 @@ def calculate_target_profit_price(break_even_price, target_percent):
 #LOGGER TO GOOGLE SHEET
 def save_to_gsheet(entry_price, sell_price, position_quantity,
                    pnl, time_diff, formatted_date_time, sell_reason, percent_of_trade,
-                   highest_price, percent_diff_from_break_even):
+                   highest_price, percent_diff_from_break_even, lowest_price, lowest_drawdown_pct):
     try:
         client = get_gsheet_client()
         sheet = client.open("Trading Bot").sheet1
@@ -61,7 +61,9 @@ def save_to_gsheet(entry_price, sell_price, position_quantity,
             sell_reason,
             percent_of_trade,
             highest_price if highest_price is not None else "N/A",
-            round(percent_diff_from_break_even, 4) if percent_diff_from_break_even is not None else "N/A"
+            round(percent_diff_from_break_even, 4) if percent_diff_from_break_even is not None else "N/A",
+            lowest_price if lowest_price is not None else "N/A",
+            round(lowest_drawdown_pct, 4) if lowest_drawdown_pct is not None else "N/A"
         ])
         print("✅ Logged to Google Sheet.")
     except Exception as e:
@@ -70,7 +72,7 @@ def save_to_gsheet(entry_price, sell_price, position_quantity,
 #Force Trade SELL
 def force_exit():
     global in_position, entry_price, position_quantity, stop_safety_net, sell_time
-    global highest_price, break_even_price, target_profit_price
+    global highest_price, lowest_price, break_even_price, target_profit_price
 
     print("⛔ FORCE EXIT: Attempting to close position using available wallet balance.")
 
@@ -97,11 +99,16 @@ def force_exit():
         percent_diff_from_break_even = None
         if highest_price is not None and break_even_price is not None:
             percent_diff_from_break_even = ((highest_price - break_even_price) / break_even_price) * 100
+        
+        # Calculate lowest price drawdown from entry
+        lowest_drawdown_pct = None
+        if lowest_price is not None and entry_price is not None:
+            lowest_drawdown_pct = ((lowest_price - entry_price) / entry_price) * 100
 
         print(f"✅ FORCE EXIT | Sold {qty_for_pnl} at ${sell_price:.6f}, PnL: ${pnl:.6f}")
         save_to_gsheet(entry_price, sell_price, qty_for_pnl,
                        pnl, time_diff, formatted_date_time, "force exit", percent_of_trade, 
-                       highest_price, percent_diff_from_break_even)
+                       highest_price, percent_diff_from_break_even, lowest_price, lowest_drawdown_pct)
         
     except Exception as e:
         print("❌ Force exit failed:", e)
@@ -110,6 +117,7 @@ def force_exit():
         entry_price       = None
         position_quantity = None
         highest_price     = None
+        lowest_price      = None
         break_even_price  = None
         target_profit_price = None
         stop_safety_net.set()
@@ -147,6 +155,7 @@ last_trade_timestamp   = 0
 buy_time               = None
 sell_time              = None
 highest_price          = None
+lowest_price           = None
 break_even_price       = None
 target_profit_price    = None
 
@@ -281,7 +290,7 @@ def position_close_call():
 # --- Trade Logic -------------------------------------------------------------------------------
 def execute_buy_order():
     global in_position, entry_price, position_quantity, stop_safety_net, buy_time
-    global highest_price, break_even_price, target_profit_price
+    global highest_price, lowest_price, break_even_price, target_profit_price
 
     print("🚀 Executing market BUY order...")
 
@@ -324,13 +333,14 @@ def execute_buy_order():
     break_even_price = calculate_break_even_price(entry_price)
     target_profit_price = calculate_target_profit_price(break_even_price, TARGET_PROFIT_PERCENT)
     
-    # Initialize highest price tracking
+    # Initialize highest and lowest price tracking
     highest_price = entry_price
+    lowest_price = entry_price
     
     print(f"💰 Bought {position_quantity} of {SYMBOL} at ${entry_price:.6f}")
     print(f"📊 BREAK-EVEN PRICE: ${break_even_price:.6f} (covers {(TAKER_FEE_RATE + MAKER_FEE_RATE) * 100:.4f}% total fees)")
     print(f"🎯 TARGET PROFIT PRICE: ${target_profit_price:.6f} (target profit: {TARGET_PROFIT_PERCENT * 100}%)")
-    print(f"📈 Starting highest price tracking at: ${highest_price:.6f}")
+    print(f"📈 Starting price tracking at: ${entry_price:.6f}")
 
     stop_safety_net.clear()
     thread = threading.Thread(
@@ -343,7 +353,7 @@ def execute_buy_order():
 
 def execute_sell_order(sell_reason="normal sell"):
     global in_position, entry_price, position_quantity, stop_safety_net, sell_time
-    global highest_price, break_even_price
+    global highest_price, lowest_price, break_even_price
 
     print(f"📉 Executing market SELL order (Reason: {sell_reason})")
     avg_price, filled_size = adapter.place_market_sell_reduce_only(coin, position_quantity)
@@ -366,6 +376,11 @@ def execute_sell_order(sell_reason="normal sell"):
     percent_diff_from_break_even = None
     if highest_price is not None and break_even_price is not None:
         percent_diff_from_break_even = ((highest_price - break_even_price) / break_even_price) * 100
+    
+    # Calculate lowest price drawdown from entry
+    lowest_drawdown_pct = None
+    if lowest_price is not None and entry_price is not None:
+        lowest_drawdown_pct = ((lowest_price - entry_price) / entry_price) * 100
 
     print(f"📊 Trade closed | Entry: ${entry_price:.6f}, "
           f"Sell: ${sell_price:.6f}, Qty: {position_quantity}, "
@@ -374,22 +389,27 @@ def execute_sell_order(sell_reason="normal sell"):
         print(f"📈 Highest price during trade: ${highest_price:.6f}")
     if percent_diff_from_break_even is not None:
         print(f"📊 Highest price % diff from break-even: {percent_diff_from_break_even:.4f}%")
+    if lowest_price is not None:
+        print(f"📉 Lowest price during trade: ${lowest_price:.6f}")
+    if lowest_drawdown_pct is not None:
+        print(f"📊 Lowest drawdown from entry: {lowest_drawdown_pct:.4f}%")
     
     save_to_gsheet(entry_price, sell_price,
                    position_quantity, pnl,
                    time_diff, formatted_date_time, sell_reason, percent_of_trade, 
-                   highest_price, percent_diff_from_break_even)
+                   highest_price, percent_diff_from_break_even, lowest_price, lowest_drawdown_pct)
 
     in_position       = False
     entry_price       = None
     position_quantity = None
     highest_price     = None
+    lowest_price      = None
     break_even_price  = None
     target_profit_price = None
     stop_safety_net.set()
 
 def monitor_position(entry):
-    global highest_price, break_even_price, target_profit_price
+    global highest_price, lowest_price, break_even_price, target_profit_price
     
     print("🛡️ Position monitoring activated. Tracking stop-loss and profit target...")
     
@@ -404,11 +424,16 @@ def monitor_position(entry):
                 highest_price = current_price
                 print(f"📈 New highest price: ${highest_price:.6f}")
             
+            # Update lowest price
+            if lowest_price is None or current_price < lowest_price:
+                lowest_price = current_price
+                print(f"📉 New lowest price: ${lowest_price:.6f}")
+            
             # Calculate thresholds
             stop_loss_threshold = entry * (1 - STOP_LOSS_PERCENT)
             
             # Status logging
-            status_line = f"💰 Price: ${current_price:.6f} | Break-even: ${break_even_price:.6f} | Target: ${target_profit_price:.6f} | Highest: ${highest_price:.6f}"
+            status_line = f"💰 Price: ${current_price:.6f} | Break-even: ${break_even_price:.6f} | Target: ${target_profit_price:.6f} | Highest: ${highest_price:.6f} | Lowest: ${lowest_price:.6f}"
             print(status_line)
             
             # Check stop-loss first (priority)
