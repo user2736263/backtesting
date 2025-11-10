@@ -3,7 +3,6 @@
 
 # Service account credentials
 service_account.json
-*.json
 
 # Python
 __pycache__/
@@ -12,6 +11,7 @@ __pycache__/
 *.so
 .Python
 venv/
+.venv/
 env/
 ENV/
 
@@ -24,4 +24,14 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+
+# Data cache (large files, regenerated automatically)
+backtest_data_cache/
+
+# Personal trading data
+Trading Bot*.csv
+Trading Bot*.xlsx
+
+# Results (optional - you might want to keep these)
+# backtest_results/
 
