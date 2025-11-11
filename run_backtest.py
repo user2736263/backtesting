@@ -5,6 +5,6 @@ This script can be run from the project root.
 """
 
 if __name__ == "__main__":
-    from backtest.run_optimization import main
+    from run_optimization import main
     main()
 

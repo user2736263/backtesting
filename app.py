@@ -11,7 +11,7 @@ import datetime
 import math
 from decimal import Decimal, ROUND_DOWN
 from dotenv import load_dotenv
-from exchanges.hyperliquid_adapter import from_env as hl_from_env
+from hyperliquid_adapter import from_env as hl_from_env
 
 # Load environment variables
 load_dotenv()
@@ -378,7 +378,7 @@ def position_close_call():
 # --- Trade Logic -------------------------------------------------------------------------------
 def execute_buy_order():
     global in_position, entry_price, position_quantity, stop_safety_net, buy_time
-    global highest_price, lowest_price, break_even_price, target_profit_price
+    global highest_price, lowest_price, break_even_price, target_profit_price, position_side
 
     print("🚀 Executing market BUY order...")
 
@@ -441,8 +441,8 @@ def execute_buy_order():
 
 
 def execute_short_order():
-    global in_position, entry_price, position_quantity, stop_safety_net, buy_time
-    global highest_price, lowest_price, break_even_price, target_profit_price, position_side
+    global in_position, entry_price, position_quantity, stop_safety_net, buy_time, position_side
+    global highest_price, lowest_price, break_even_price, target_profit_price
 
     print("🚀 Executing market SELL order (OPEN SHORT)...")
 

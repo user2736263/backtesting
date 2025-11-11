@@ -11,9 +11,9 @@ from datetime import datetime
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backtest.data_fetcher import fetch_historical_data
-from backtest.optimizer import Optimizer
-from backtest.analyzer import ResultsAnalyzer
+from data_fetcher import fetch_historical_data
+from optimizer import Optimizer
+from analyzer import ResultsAnalyzer
 
 
 def main():
