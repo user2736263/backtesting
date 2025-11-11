@@ -1,0 +1,13 @@
+flask
+ccxt
+requests
+gspread
+oauth2client
+pandas
+numpy
+urllib3
+python-dotenv
+hyperliquid-python-sdk
+eth-account
+matplotlib
+tqdm
