@@ -9,5 +9,3 @@ urllib3
 python-dotenv
 hyperliquid-python-sdk
 eth-account
-matplotlib
-tqdm
