@@ -6,7 +6,7 @@ import os
 import logging
 import csv
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 import datetime
 import math
 from decimal import Decimal, ROUND_DOWN
@@ -21,8 +21,8 @@ logging.basicConfig(level=logging.DEBUG)
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds",
              "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(
-        "service_account.json", scope)
+    creds = Credentials.from_service_account_file(
+        "service_account.json", scopes=scope)
     client = gspread.authorize(creds)
     return client
 
