@@ -7,6 +7,7 @@
 ```bash
 python run_backtest.py
 ```
+.venv\Scripts\activate
 
 ### Option 2: Using Python Module
 
